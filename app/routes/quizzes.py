@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException
-from typing import List
+from fastapi import APIRouter, HTTPException,Query
+from typing import List,Optional
 import logging
 
 from app.models.quiz import (
@@ -49,46 +49,102 @@ async def get_single_quiz(quiz_id : int):
 
 
 # list quizzes
-@router.get("",response_model=QuizListResponse)
-async def list_quizess_response():
-    try:
-        # Read all quizzes
-        quizzes = read_all_quizzes()
-        
-        # Convert to simplified format for list view
-        quiz_items = []
-        for quiz in quizzes:
-            item = QuizListItem(
-                id=quiz['id'],
-                title=quiz['title'],
-                description=quiz.get('description'),
-                question_count=len(quiz.get('questions', [])),
-                created_at=quiz.get('created_at')
-            )
-            quiz_items.append(item)
-        
-        # Build response with pagination metadata
-        response = QuizListResponse(
+@router.get("", response_model=QuizListResponse)
+async def list_quizzes_endpoint(
+    difficulty: Optional[str] = Query(
+        None, 
+        description="Filter by difficulty: easy, medium, hard"
+    ),
+    topic: Optional[str] = Query(
+        None,
+        description="Filter by topic (partial match in title)"
+    ),
+    limit: int = Query(
+        10, 
+        ge=1, 
+        le=100,
+        description="Items per page (1-100)"
+    ),
+    skip: int = Query(
+        0,
+        ge=0,
+        description="How many items to skip (for pagination)"
+    )
+):
+  try:
+      quizzes = read_all_quizzes() # read all quizzess
+      # filter results
+      if difficulty:
+          # filter by difficulty
+          quizzes = [
+                     q for q in quizzes
+                     if q.get("difficulty",'').lower() == difficulty.lower()
+                    ]
+      # filter by topic
+      if topic:
+          quizzes = [
+              q for q in quizzes
+              if (topic.lower() in q.get('title','').lower() or
+                  topic.lower() in q.get('description','').lower())
+           ]    
+      # toal len after filtering
+      total = len(quizzes)
+
+      if total > 0:
+          total_pages = (total + limit - 1) // limit
+      else:
+          total_pages = 1      
+
+      # applying pagination(skip + limit)
+      paginated_quizzes = quizzes[skip:skip+limit]
+      
+      # current page number
+      current_page = (skip//limit) + 1
+
+      # has next : next page exists
+      has_next = (skip + limit) < total
+
+      # has prev : previous page exists
+      has_prev = (skip > 0)
+
+      # convert to list items
+      quiz_items = []
+      for quiz in paginated_quizzes:
+            try:
+                item = QuizListItem(
+                    id=quiz['id'],
+                    title=quiz['title'],
+                    description=quiz.get('description'),
+                    question_count=len(quiz.get('questions', [])),
+                    created_at=quiz.get('created_at')
+                )
+                quiz_items.append(item)
+            except KeyError as e:
+                logger.warning(f"Skipping malformed quiz: {str(e)}")
+                continue  
+
+      # build response
+      response = QuizListResponse(
             data=quiz_items,
             pagination={
-                "skip": 0,
-                "limit": 0,
-                "total": len(quiz_items),
-                "page": 1,
-                "pages": 1,
-                "has_next": False,
-                "has_prev": False
+                "skip": skip,
+                "limit": limit,
+                "total": total,
+                "page": current_page,
+                "pages": total_pages,
+                "has_next": has_next,
+                "has_prev": has_prev
             }
         )
         
-        logger.info(f"Listed {len(quiz_items)} quizzes")
-        
-        return response
-    
-    except Exception as e:
-        logger.error(f"Error listing quizzes: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+      logger.info(
+            f"Listed quizzes: skip={skip}, limit={limit}, "
+            f"total={total}, page={current_page}/{total_pages}"
+      )      
 
+  except Exception as e:
+      raise HTTPException(status_code=400,detail=str(e))     
+    
 @router.post("/{quiz_id}/submit", response_model=QuizResult)
 async def submit_quiz_endpoint(
     quiz_id: int,
