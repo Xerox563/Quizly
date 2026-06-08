@@ -145,3 +145,100 @@
 # This is achieved using a unique idempotency key
 # that helps the server identify previously processed requests.
 '''
+
+from fastapi import FastAPI, Header, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import create_engine, Column, Integer, String, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime
+import redis
+import json
+import uuid
+
+DB_URL = "postgresql://user:password@localhost/todo_db"
+engine = create_engine(DB_URL)
+Session = sessionmaker(bind=engine)
+cache = redis.Redis(host='localhost', port=6379)
+
+Base = declarative_base()
+
+class TodoDB(Base):
+    __tablename__ = "todos"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer)
+    title = Column(String)
+
+class TodoCreate(BaseModel):
+    title: str
+
+app = FastAPI()
+
+@app.post("/todos")
+def create_todo(
+    user_id: int,
+    todo: TodoCreate,
+    idempotency_key: str = Header(None)  # Get from request header
+):
+    # Step 1: If no idempotency key, generate one
+    if not idempotency_key:
+        idempotency_key = str(uuid.uuid4())
+    
+    # Step 2: Check if we've seen this key before
+    cache_key = f"idempotency:{idempotency_key}"
+    cached_response = cache.get(cache_key)
+    
+    # Step 3: If cached, return immediately
+    if cached_response:
+        return json.loads(cached_response)
+    
+    # Step 4: Process request (create todo)
+    db = Session()
+    new_todo = TodoDB(user_id=user_id, title=todo.title)
+    db.add(new_todo)
+    db.commit()
+    db.refresh(new_todo)
+    db.close()
+    
+    # Step 5: Create response
+    response = {
+        "id": new_todo.id,
+        "title": new_todo.title,
+        "idempotency_key": idempotency_key
+    }
+    
+    # Step 6: Cache response for future identical requests
+    # Keep cached for 24 hours
+    cache.setex(cache_key, 86400, json.dumps(response))
+    
+    # Step 7: Return response
+    return response
+
+# For DELETE requests:
+@app.delete("/todos/{todo_id}")
+def delete_todo(
+    todo_id: int,
+    idempotency_key: str = Header(None)
+):
+    # Step 1: Check cache
+    cache_key = f"idempotency:{idempotency_key}"
+    cached = cache.get(cache_key)
+    
+    # Step 2: If cached, return cached response
+    if cached:
+        return json.loads(cached)
+    
+    # Step 3: Delete from database
+    db = Session()
+    todo = db.query(TodoDB).filter(TodoDB.id == todo_id).first()
+    if todo:
+        db.delete(todo)
+        db.commit()
+    db.close()
+    
+    # Step 4: Cache response
+    response = {"deleted": todo_id}
+    cache.setex(cache_key, 86400, json.dumps(response))
+    
+    # Step 5: Return
+    return response
