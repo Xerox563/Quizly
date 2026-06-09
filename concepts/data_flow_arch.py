@@ -79,3 +79,41 @@ Characteristics:
 ├─ Always running
 └─ Expensive (dedicated servers)
 '''
+
+# Exponential Backoff Retry
+'''
+Why exponential backoff?
+
+Exponential Backoff is a retry strategy where, after a failure, you wait longer before each subsequent retry.
+Instead of retrying immediately over and over, the waiting time increases exponentially.
+
+Bad approach (constant delay):
+├─ Retry every 1 second
+├─ If service overloaded, hammers it more
+└─ Makes problem worse!
+
+Good approach (exponential):
+├─ Retry 1: Wait 1 second
+├─ Retry 2: Wait 2 seconds
+├─ Retry 3: Wait 4 seconds
+├─ Retry 4: Wait 8 seconds
+├─ Gives service time to recover
+└─ Better chance of success
+'''
+
+# With Exponential Backoff
+'''
+Request → Fail
+Wait 1 second
+Retry → Fail
+
+Wait 2 seconds
+Retry → Fail
+
+Wait 4 seconds
+Retry → Fail
+
+Wait 8 seconds
+Retry → Success
+'''
+# 𝐷𝑒𝑙𝑎𝑦 = 𝐵𝑎𝑠𝑒𝐷𝑒𝑙𝑎𝑦 × 2^𝑅𝑒𝑡𝑟𝑦𝐶𝑜𝑢𝑛𝑡
