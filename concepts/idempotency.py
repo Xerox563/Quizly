@@ -215,6 +215,7 @@ def create_todo(
     return response
 
 # For DELETE requests:
+
 @app.delete("/todos/{todo_id}")
 def delete_todo(
     todo_id: int,
